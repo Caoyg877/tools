@@ -57,12 +57,12 @@ EOF
 parse_arguments() {
     if [ $# -lt 2 ]; then
         show_help
-        exit 1
-    fi
+    exit 1
+fi
 
-    PID=$1
-    DURATION=$2
-    ENABLE_PERF=false
+PID=$1
+DURATION=$2
+ENABLE_PERF=false
     AUTO_PERF=true
 
     # 检查是否为持续监听模式
@@ -100,28 +100,28 @@ parse_arguments() {
 
 # 权限检查
 check_permissions() {
-    if [ "$EUID" -ne 0 ]; then
+if [ "$EUID" -ne 0 ]; then
         log_error "请以root用户身份运行此脚本"
-        exit 1
-    fi
+    exit 1
+fi
 }
 
 # 检查PID是否存在
 check_pid() {
-    if ! kill -0 $PID 2>/dev/null; then
+if ! kill -0 $PID 2>/dev/null; then
         log_error "PID $PID 不存在或无法访问"
-        exit 1
-    fi
+    exit 1
+fi
 }
 
 # 配置系统参数
 configure_system() {
-    if ! grep -q "kernel.perf_event_paranoid = -1" /etc/sysctl.conf; then
+if ! grep -q "kernel.perf_event_paranoid = -1" /etc/sysctl.conf; then
         log_info "配置perf权限..."
-        echo "" | sudo tee -a /etc/sysctl.conf
-        echo "kernel.perf_event_paranoid = -1" | sudo tee -a /etc/sysctl.conf
-        sysctl -p
-    fi
+    echo "" | sudo tee -a /etc/sysctl.conf
+    echo "kernel.perf_event_paranoid = -1" | sudo tee -a /etc/sysctl.conf
+    sysctl -p
+fi
 }
 
 # 获取进程名称
@@ -157,7 +157,7 @@ create_output_dir() {
 
 # 设置环境变量
 setup_environment() {
-    export LD_LIBRARY_PATH=$(pwd)/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$(pwd)/lib:$LD_LIBRARY_PATH
 }
 
 # 进度显示函数
@@ -175,14 +175,14 @@ show_progress() {
         done
     else
         log_info "监控进度:"
-        while [ $elapsed -lt $duration ]; do
-            local percentage=$((elapsed * 100 / duration))
-            local remaining=$((duration - elapsed))
-            printf "\r[%3d%%] 已监控: %ds, 剩余: %ds" $percentage $elapsed $remaining
-            sleep $interval
-            elapsed=$((elapsed + interval))
-        done
-        printf "\r[100%%] 监控完成! 总时长: %ds\n" $duration
+    while [ $elapsed -lt $duration ]; do
+        local percentage=$((elapsed * 100 / duration))
+        local remaining=$((duration - elapsed))
+        printf "\r[%3d%%] 已监控: %ds, 剩余: %ds" $percentage $elapsed $remaining
+        sleep $interval
+        elapsed=$((elapsed + interval))
+    done
+    printf "\r[100%%] 监控完成! 总时长: %ds\n" $duration
     fi
     echo ""  # 添加空行，避免与后续输出混在一起
 }
@@ -361,38 +361,44 @@ force_perf_monitoring() {
 # 处理top输出数据
 process_top_data() {
     log_info "开始处理CPU和内存占用数据..."
-    
-    # 处理top输出，提取CPU和内存占用率
-    echo "ts,cpu,mem" > $OUTPUT_DIR/cpu_mem_usage_${PID}_${PROCESS_NAME}.csv
-    
-    # 使用awk处理整个文件，关联top行和PID行
-    awk -v pid="$PID" '
-    /^top - / {
-        # 提取top行的时间戳
-        timestamp = $3  # 时间戳在第3列
-        next
-    }
-    /^[[:space:]]*'$PID'[[:space:]]/ {
-        # 找到PID行，提取CPU和内存占用率
-        cpu_usage = $9  # CPU占用率在第9列
-        mem_usage = $10 # 内存占用率在第10列
-        if (cpu_usage ~ /^[0-9]+\.?[0-9]*$/ && mem_usage ~ /^[0-9]+\.?[0-9]*$/) {
-            print timestamp "," cpu_usage "," mem_usage
+
+# 处理top输出，提取CPU和内存占用率
+    echo "ts,cpu,mem,res,virt,shr" > $OUTPUT_DIR/cpu_mem_usage_${PID}_${PROCESS_NAME}.csv
+
+# 使用awk处理整个文件，关联top行和PID行
+awk -v pid="$PID" '
+/^top - / {
+    # 提取top行的时间戳
+    timestamp = $3  # 时间戳在第3列
+    next
+}
+/^[[:space:]]*'$PID'[[:space:]]/ {
+    # 找到PID行，提取CPU和内存占用率
+    cpu_usage = $9  # CPU占用率在第9列
+    mem_usage = $10 # 内存占用率在第10列
+        res_memory = $6 # RES常驻内存在第6列
+        virt_memory = $5 # VIRT虚拟内存在第5列
+        shr_memory = $7  # SHR共享内存在第7列
+    if (cpu_usage ~ /^[0-9]+\.?[0-9]*$/ && mem_usage ~ /^[0-9]+\.?[0-9]*$/) {
+            print timestamp "," cpu_usage "," mem_usage "," res_memory "," virt_memory "," shr_memory
         }
     }' $OUTPUT_DIR/top_${PID}_${PROCESS_NAME}.txt >> $OUTPUT_DIR/cpu_mem_usage_${PID}_${PROCESS_NAME}.csv
-    
-    # 如果上面的方法不行，使用更简单的方法
+
+# 如果上面的方法不行，使用更简单的方法
     if [ ! -s $OUTPUT_DIR/cpu_mem_usage_${PID}_${PROCESS_NAME}.csv ] || [ "$(wc -l < $OUTPUT_DIR/cpu_mem_usage_${PID}_${PROCESS_NAME}.csv)" -le 1 ]; then
         log_warn "使用备用方法提取CPU和内存数据..."
-        
-        # 备用方法：直接按列位置提取
+    
+    # 备用方法：直接按列位置提取
         grep -E "[[:space:]]*$PID[[:space:]]" $OUTPUT_DIR/top_${PID}_${PROCESS_NAME}.txt | awk '
-        {
-            # 直接提取第9列的CPU占用率和第10列的内存占用率
-            cpu_usage = $9
+    {
+            # 直接提取第9列的CPU占用率、第10列的内存占用率、第6列的RES内存、第5列的VIRT内存和第7列的SHR内存
+        cpu_usage = $9
             mem_usage = $10
+            res_memory = $6
+            virt_memory = $5
+            shr_memory = $7
             if (cpu_usage ~ /^[0-9]+\.?[0-9]*$/ && mem_usage ~ /^[0-9]+\.?[0-9]*$/) {
-                printf "N/A,%.2f,%.2f\n", cpu_usage, mem_usage
+                printf "N/A,%.2f,%.2f,%s,%s,%s\n", cpu_usage, mem_usage, res_memory, virt_memory, shr_memory
             }
         }' >> $OUTPUT_DIR/cpu_mem_usage_${PID}_${PROCESS_NAME}.csv
     fi
@@ -430,25 +436,25 @@ generate_cpu_mem_report() {
         
         # 提取CPU数据并排序
         awk -F',' 'NR>1 {print $2}' $OUTPUT_DIR/cpu_mem_usage_${PID}_${PROCESS_NAME}.csv | sort -n > $OUTPUT_DIR/cpu_sorted.txt
-        
-        # 计算CPU统计信息
-        awk -F',' 'NR>1 {
-            cpu_sum += $2
-            count++
-            if ($2 > cpu_max) cpu_max = $2
-            if (count == 1 || $2 < cpu_min) cpu_min = $2
-        } END {
-            if (count > 0) {
-                cpu_avg = cpu_sum / count
-                printf "  平均占用率: %.2f%%\n", cpu_avg
-                printf "  最大占用率: %.2f%%\n", cpu_max
-                printf "  最小占用率: %.2f%%\n", cpu_min
-                printf "  采样次数: %d\n", count
-            }
+    
+    # 计算CPU统计信息
+    awk -F',' 'NR>1 {
+        cpu_sum += $2
+        count++
+        if ($2 > cpu_max) cpu_max = $2
+        if (count == 1 || $2 < cpu_min) cpu_min = $2
+    } END {
+        if (count > 0) {
+            cpu_avg = cpu_sum / count
+            printf "  平均占用率: %.2f%%\n", cpu_avg
+            printf "  最大占用率: %.2f%%\n", cpu_max
+            printf "  最小占用率: %.2f%%\n", cpu_min
+            printf "  采样次数: %d\n", count
+        }
         }' $OUTPUT_DIR/cpu_mem_usage_${PID}_${PROCESS_NAME}.csv >> $OUTPUT_DIR/cpu_mem_report_${PID}_${PROCESS_NAME}.txt
-        
-        # 计算CPU百分位数
-        if [ -s $OUTPUT_DIR/cpu_sorted.txt ]; then
+    
+    # 计算CPU百分位数
+    if [ -s $OUTPUT_DIR/cpu_sorted.txt ]; then
             echo "  百分位数统计:" >> $OUTPUT_DIR/cpu_mem_report_${PID}_${PROCESS_NAME}.txt
             printf "    P50: %.2f%%\n" $(calculate_percentile $OUTPUT_DIR/cpu_sorted.txt 50) >> $OUTPUT_DIR/cpu_mem_report_${PID}_${PROCESS_NAME}.txt
             printf "    P90: %.2f%%\n" $(calculate_percentile $OUTPUT_DIR/cpu_sorted.txt 90) >> $OUTPUT_DIR/cpu_mem_report_${PID}_${PROCESS_NAME}.txt
@@ -461,31 +467,33 @@ generate_cpu_mem_report() {
         
         # 提取内存数据并排序
         awk -F',' 'NR>1 {print $3}' $OUTPUT_DIR/cpu_mem_usage_${PID}_${PROCESS_NAME}.csv | sort -n > $OUTPUT_DIR/mem_sorted.txt
-        
-        # 计算内存统计信息
-        awk -F',' 'NR>1 {
-            mem_sum += $3
-            count++
-            if ($3 > mem_max) mem_max = $3
-            if (count == 1 || $3 < mem_min) mem_min = $3
-        } END {
-            if (count > 0) {
-                mem_avg = mem_sum / count
-                printf "  平均占用率: %.2f%%\n", mem_avg
-                printf "  最大占用率: %.2f%%\n", mem_max
-                printf "  最小占用率: %.2f%%\n", mem_min
-                printf "  采样次数: %d\n", count
-            }
+    
+    # 计算内存统计信息
+    awk -F',' 'NR>1 {
+        mem_sum += $3
+        count++
+        if ($3 > mem_max) mem_max = $3
+        if (count == 1 || $3 < mem_min) mem_min = $3
+    } END {
+        if (count > 0) {
+            mem_avg = mem_sum / count
+            printf "  平均占用率: %.2f%%\n", mem_avg
+            printf "  最大占用率: %.2f%%\n", mem_max
+            printf "  最小占用率: %.2f%%\n", mem_min
+            printf "  采样次数: %d\n", count
+        }
         }' $OUTPUT_DIR/cpu_mem_usage_${PID}_${PROCESS_NAME}.csv >> $OUTPUT_DIR/cpu_mem_report_${PID}_${PROCESS_NAME}.txt
-        
-        # 计算内存百分位数
-        if [ -s $OUTPUT_DIR/mem_sorted.txt ]; then
+    
+    # 计算内存百分位数
+    if [ -s $OUTPUT_DIR/mem_sorted.txt ]; then
             echo "  百分位数统计:" >> $OUTPUT_DIR/cpu_mem_report_${PID}_${PROCESS_NAME}.txt
             printf "    P50: %.2f%%\n" $(calculate_percentile $OUTPUT_DIR/mem_sorted.txt 50) >> $OUTPUT_DIR/cpu_mem_report_${PID}_${PROCESS_NAME}.txt
             printf "    P90: %.2f%%\n" $(calculate_percentile $OUTPUT_DIR/mem_sorted.txt 90) >> $OUTPUT_DIR/cpu_mem_report_${PID}_${PROCESS_NAME}.txt
             printf "    P95: %.2f%%\n" $(calculate_percentile $OUTPUT_DIR/mem_sorted.txt 95) >> $OUTPUT_DIR/cpu_mem_report_${PID}_${PROCESS_NAME}.txt
             printf "    P99: %.2f%%\n" $(calculate_percentile $OUTPUT_DIR/mem_sorted.txt 99) >> $OUTPUT_DIR/cpu_mem_report_${PID}_${PROCESS_NAME}.txt
         fi
+        
+        
     else
         echo "警告: 未找到有效的CPU和内存占用数据" >> $OUTPUT_DIR/cpu_mem_report_${PID}_${PROCESS_NAME}.txt
     fi
@@ -534,22 +542,22 @@ generate_report() {
             printf "    P90: %.2f%%\n" $(calculate_percentile $OUTPUT_DIR/${metric_name,,}_sorted.txt 90) >> $report_file
             printf "    P95: %.2f%%\n" $(calculate_percentile $OUTPUT_DIR/${metric_name,,}_sorted.txt 95) >> $report_file
             printf "    P99: %.2f%%\n" $(calculate_percentile $OUTPUT_DIR/${metric_name,,}_sorted.txt 99) >> $report_file
-        fi
-    else
-        echo "警告: 未找到有效的${metric_name}占用数据" >> $report_file
     fi
+else
+        echo "警告: 未找到有效的${metric_name}占用数据" >> $report_file
+fi
 }
 
 # 清理临时文件
 cleanup() {
-    rm -f $OUTPUT_DIR/cpu_sorted.txt $OUTPUT_DIR/mem_sorted.txt 
+    rm -f $OUTPUT_DIR/cpu_sorted.txt $OUTPUT_DIR/mem_sorted.txt
 }
 
 # 显示结果摘要
 package_summary() {
     log_info "监控完成！"
     echo ""
-    echo "输出文件:"
+echo "输出文件:"
     echo "  - $OUTPUT_DIR/cpu_mem_usage_${PID}_${PROCESS_NAME}.csv (CSV格式的CPU和内存占用数据)"
     echo "  - $OUTPUT_DIR/cpu_mem_report_${PID}_${PROCESS_NAME}.txt (CPU和内存占用统计报告，包含百分位数)"
     echo "  - $OUTPUT_DIR/top_${PID}_${PROCESS_NAME}.txt (原始top输出)"
